@@ -146,6 +146,11 @@ class ChatResponse(BaseModel):
     execution_metadata: ExecutionMetadata = Field(description="Execution details")
     agent_outputs: list[AgentOutput] = Field(default_factory=list, description="Individual agent outputs")
     validation_report: Optional[ValidationReport] = Field(default=None, description="Validation results")
+    execution_summary: Optional[dict[str, Any]] = Field(default=None, description="Token and cost execution summary")
+    workflow_evaluation: Optional[dict[str, Any]] = Field(default=None, description="Workflow-level evaluations")
+    agent_evaluations: Optional[dict[str, Any]] = Field(default=None, description="Agent-level evaluations")
+    langsmith_trace_url: Optional[str] = Field(default=None, description="LangSmith trace URL")
+
 
 
 class EvaluationRequest(BaseModel):

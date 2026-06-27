@@ -34,7 +34,11 @@ class AgentTraceCallback(BaseCallbackHandler):
         super().__init__()
         self.session_id = session_id
         self._timers: dict[str, float] = {}
+        self._run_names: dict[str, str] = {}
+        self.node_durations: dict[str, float] = {}
         self.total_tokens: int = 0
+        self.prompt_tokens: int = 0
+        self.completion_tokens: int = 0
         self.tool_calls: int = 0
         self.llm_calls: int = 0
         self.retriever_calls: int = 0
@@ -76,6 +80,10 @@ class AgentTraceCallback(BaseCallbackHandler):
                 total = token_usage.get("total_tokens", 0)
                 if total:
                     self.total_tokens += total
+                prompt = token_usage.get("prompt_tokens", token_usage.get("input_tokens", 0))
+                completion = token_usage.get("completion_tokens", token_usage.get("output_tokens", 0))
+                self.prompt_tokens += prompt
+                self.completion_tokens += completion
 
         logger.info(
             f"LLM call completed ({duration:.0f}ms)",
@@ -86,6 +94,7 @@ class AgentTraceCallback(BaseCallbackHandler):
                 "token_count": token_usage.get("total_tokens", 0),
             },
         )
+
 
     def on_llm_error(
         self,
@@ -207,6 +216,7 @@ class AgentTraceCallback(BaseCallbackHandler):
         """Called when a chain/graph node starts."""
         self._timers[str(run_id)] = time.time()
         name = serialized.get("name", kwargs.get("name", "unknown"))
+        self._run_names[str(run_id)] = name
         logger.debug(
             f"Chain started: {name}",
             extra={"session_id": self.session_id, "event_type": "chain_start"},
@@ -221,6 +231,8 @@ class AgentTraceCallback(BaseCallbackHandler):
     ) -> None:
         """Called when a chain/graph node finishes."""
         duration = (time.time() - self._timers.pop(str(run_id), time.time())) * 1000
+        name = self._run_names.pop(str(run_id), "unknown")
+        self.node_durations[name] = duration
         logger.debug(
             f"Chain completed ({duration:.0f}ms)",
             extra={
@@ -241,4 +253,6 @@ class AgentTraceCallback(BaseCallbackHandler):
             "tool_calls": self.tool_calls,
             "retriever_calls": self.retriever_calls,
             "total_tokens": self.total_tokens,
+            "prompt_tokens": self.prompt_tokens,
+            "completion_tokens": self.completion_tokens,
         }

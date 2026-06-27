@@ -102,15 +102,60 @@ async def chat(request: ChatRequest) -> ChatResponse:
             "execution_metadata": None,
         }
 
-        # Execute the graph
-        graph = get_compiled_graph()
-        result = graph.invoke(initial_state, config=config)
+        # Setup callbacks to capture token usage, latency, and LangSmith root run ID
+        from traces.callbacks import AgentTraceCallback
+        from langchain_core.callbacks import BaseCallbackHandler
+        from uuid import UUID
+        from evaluations.real_time import RealTimeEvaluationService
+
+        class RootRunIdCallback(BaseCallbackHandler):
+            def __init__(self) -> None:
+                super().__init__()
+                self.root_run_id: Optional[UUID] = None
+
+            def on_chain_start(
+                self,
+                serialized: dict[str, Any],
+                inputs: dict[str, Any],
+                *,
+                run_id: UUID,
+                **kwargs: Any,
+            ) -> None:
+                if self.root_run_id is None:
+                    self.root_run_id = run_id
+
+        trace_callback = AgentTraceCallback(session_id=session.session_id)
+        root_callback = RootRunIdCallback()
+
+        config["callbacks"] = config.get("callbacks", []) + [trace_callback, root_callback]
+
+        # Execute the graph via execute_query wrapper to log session_id as root input/output
+        from traces.session import state_var, config_var, evals_var, execute_query
+        
+        state_token = state_var.set(initial_state)
+        config_token = config_var.set(config)
+        evals_token = evals_var.set(({}, {}))
+        try:
+            execute_query(session.session_id)
+            result = initial_state
+            workflow_evals, agent_evals = evals_var.get()
+        finally:
+            state_var.reset(state_token)
+            config_var.reset(config_token)
+            evals_var.reset(evals_token)
 
         # Compute execution metadata
         total_duration_ms = (time.time() - start_time) * 1000
 
         all_agents = {"rag_agent", "research_agent", "calculator_agent"}
         invoked = set(result.get("agents_to_invoke", []))
+        
+        # Build corrected list of invoked agents to include Summarizer and Validator if any domain agent ran
+        invoked_list = list(invoked)
+        if invoked_list:
+            invoked_list.append("summarizer")
+            invoked_list.append("validator")
+            
         skipped = list(all_agents - invoked)
         parallel_groups = result.get("parallel_groups", [])
 
@@ -124,7 +169,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
         # Finalize session
         session.finalize(
             query_type=result.get("query_type", ""),
-            agents_invoked=list(invoked),
+            agents_invoked=invoked_list,
             agents_skipped=skipped,
             parallel_groups=parallel_groups,
             tool_count=total_tool_calls,
@@ -136,10 +181,11 @@ async def chat(request: ChatRequest) -> ChatResponse:
             conversation_id=session.conversation_id,
             user_id=request.user_id,
             query_type=result.get("query_type", ""),
-            agents_invoked=list(invoked),
+            agents_invoked=invoked_list,
             agents_skipped=skipped,
             parallel_groups=parallel_groups,
             tool_count=total_tool_calls,
+            total_tokens=trace_callback.total_tokens,
             total_duration_ms=total_duration_ms,
             start_time=session.start_time,
             end_time=datetime.now(timezone.utc),
@@ -161,6 +207,17 @@ async def chat(request: ChatRequest) -> ChatResponse:
             elif isinstance(ao, dict):
                 serialized_outputs.append(AgentOutput(**ao))
 
+        # Real-time evaluations are already run inside the User Query root trace context
+
+        # Compute cost estimation (standard pricing for Claude 3.5 Sonnet)
+        cost = (trace_callback.prompt_tokens * 3.0 + trace_callback.completion_tokens * 15.0) / 1_000_000
+        execution_summary = {
+            "agents_invoked": [agent.replace("_", " ").title() for agent in invoked_list],
+            "latency": round(total_duration_ms, 2),
+            "tokens": trace_callback.total_tokens,
+            "cost": round(cost, 6),
+        }
+
         return ChatResponse(
             session_id=session.session_id,
             query=request.query,
@@ -169,6 +226,10 @@ async def chat(request: ChatRequest) -> ChatResponse:
             execution_metadata=exec_metadata,
             agent_outputs=serialized_outputs,
             validation_report=validation_report,
+            execution_summary=execution_summary,
+            workflow_evaluation=workflow_evals,
+            agent_evaluations=agent_evals,
+            langsmith_trace_url=session.langsmith_url,
         )
 
     except Exception as e:

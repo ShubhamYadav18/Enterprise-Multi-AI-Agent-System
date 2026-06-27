@@ -1,12 +1,19 @@
 """
-Custom agent-level evaluators for LangSmith.
+Custom evaluators for LangSmith (both Workflow-level and Agent-level).
 
-Replaces workflow-level metrics with 10 agent-specific metrics:
-1. RAG Agent: Groundedness, Context Relevance, Retriever Quality
-2. Calculator Agent: Groundedness, Hallucination, Latency
-3. Research Agent: Hallucination, Latency
-4. Summarizer: Consistency
-5. Validator: Validation Accuracy
+Includes 5 Workflow-level metrics:
+- answer_correctness
+- groundedness
+- context_relevance
+- task_completion
+- tool_selection
+
+And 10 Agent-level metrics:
+- RAG Agent: Groundedness, Context Relevance, Retriever Quality
+- Calculator Agent: Groundedness, Hallucination, Latency
+- Research Agent: Hallucination, Latency
+- Summarizer: Consistency
+- Validator: Validation Accuracy
 """
 
 from __future__ import annotations
@@ -40,7 +47,175 @@ def get_field(obj: Any, key: str, default: Any = None) -> Any:
 
 
 # ============================================================
-# 1. RAG Agent Evaluators
+# A. Workflow-Level Evaluators
+# ============================================================
+
+def answer_correctness_evaluator(run, example) -> dict[str, Any]:
+    """Evaluate answer correctness based on expected keywords."""
+    outputs = run.outputs or {}
+    response = get_field(outputs, "response", "") or get_field(outputs, "final_response", "")
+
+    expected = example.outputs if example else {}
+    contains_keywords = get_field(expected, "answer_contains", [])
+
+    if not contains_keywords:
+        return {"key": "answer_correctness", "score": 1.0, "comment": "No keywords to check."}
+
+    score = sum(1.0 for kw in contains_keywords if kw.lower() in response.lower()) / len(contains_keywords)
+    return {
+        "key": "answer_correctness",
+        "score": score,
+        "comment": f"Contains {score:.0%} of expected keywords.",
+    }
+
+
+def groundedness_evaluator(run, example) -> dict[str, Any]:
+    """Evaluate workflow groundedness (comparing response to retrieved context)."""
+    rag_run = find_child_run(run, "RAG Agent")
+    if not rag_run:
+        return {"key": "groundedness", "score": 1.0, "comment": "Skipped: RAG Agent was not invoked."}
+
+    outputs = rag_run.outputs or {}
+    agent_outputs = get_field(outputs, "agent_outputs", [])
+    if not agent_outputs:
+        return {"key": "groundedness", "score": 1.0, "comment": "Skipped: No agent outputs."}
+
+    rag_out = agent_outputs[0]
+    retrieved_docs = get_field(rag_out, "retrieved_documents", [])
+    if not retrieved_docs:
+        return {"key": "groundedness", "score": 1.0, "comment": "Skipped: No documents retrieved."}
+
+    context = "\n\n".join(get_field(doc, "content", "") for doc in retrieved_docs)
+
+    outputs_root = run.outputs or {}
+    response = get_field(outputs_root, "response", "") or get_field(outputs_root, "final_response", "")
+
+    llm = create_llm(max_tokens=10, temperature=0.0)
+    judge_prompt = f"""Evaluate whether the Final Answer is fully grounded in and supported by the Context.
+Do not use any external knowledge. If there are facts in the Answer that are not in the Context, rate as 0.0.
+Otherwise, rate as 1.0. Output ONLY the score (0.0 or 1.0) and nothing else.
+
+Context:
+{context}
+
+Final Answer:
+{response}
+
+Score:"""
+    try:
+        res = llm.invoke([HumanMessage(content=judge_prompt)])
+        score = float(res.content.strip())
+    except Exception:
+        score = 1.0 if "1" in res.content else 0.0
+
+    return {
+        "key": "groundedness",
+        "score": score,
+        "comment": f"Groundedness score: {score:.1f}",
+    }
+
+
+def context_relevance_evaluator(run, example) -> dict[str, Any]:
+    """Evaluate workflow context relevance (comparing context to input query)."""
+    rag_run = find_child_run(run, "RAG Agent")
+    if not rag_run:
+        return {"key": "context_relevance", "score": 1.0, "comment": "Skipped: RAG Agent was not invoked."}
+
+    outputs = rag_run.outputs or {}
+    agent_outputs = get_field(outputs, "agent_outputs", [])
+    if not agent_outputs:
+        return {"key": "context_relevance", "score": 1.0, "comment": "Skipped: No agent outputs."}
+
+    rag_out = agent_outputs[0]
+    retrieved_docs = get_field(rag_out, "retrieved_documents", [])
+    if not retrieved_docs:
+        return {"key": "context_relevance", "score": 1.0, "comment": "Skipped: No documents retrieved."}
+
+    context = "\n\n".join(get_field(doc, "content", "") for doc in retrieved_docs)
+    query = get_field(run.inputs, "query", "")
+
+    llm = create_llm(max_tokens=10, temperature=0.0)
+    judge_prompt = f"""Evaluate whether the retrieved Context is highly relevant to answering the Query.
+Rate from 0.0 (completely irrelevant) to 1.0 (perfectly relevant and sufficient).
+Output ONLY a float number between 0.0 and 1.0 and nothing else.
+
+Query: {query}
+
+Context:
+{context}
+
+Score:"""
+    try:
+        res = llm.invoke([HumanMessage(content=judge_prompt)])
+        score = float(res.content.strip())
+    except Exception:
+        score = 0.5
+
+    return {
+        "key": "context_relevance",
+        "score": score,
+        "comment": f"Context relevance score: {score:.2f}",
+    }
+
+
+def task_completion_evaluator(run, example) -> dict[str, Any]:
+    """Evaluate if the workflow successfully completes/answers the user query."""
+    outputs = run.outputs or {}
+    response = get_field(outputs, "response", "") or get_field(outputs, "final_response", "")
+    query = get_field(run.inputs, "query", "")
+
+    llm = create_llm(max_tokens=10, temperature=0.0)
+    judge_prompt = f"""Evaluate if the Answer completely resolves and answers the user Query.
+Rate 1.0 if the query is fully answered. Rate 0.0 if the answer is incomplete, avoids the question, or fails to resolve the query.
+Output ONLY the score (0.0 or 1.0) and nothing else.
+
+Query: {query}
+
+Answer:
+{response}
+
+Score:"""
+    try:
+        res = llm.invoke([HumanMessage(content=judge_prompt)])
+        score = float(res.content.strip())
+    except Exception:
+        score = 1.0 if "1" in res.content else 0.0
+
+    return {
+        "key": "task_completion",
+        "score": score,
+        "comment": f"Task completion score: {score:.1f}",
+    }
+
+
+def tool_selection_evaluator(run, example) -> dict[str, Any]:
+    """Evaluate tool selection based on expected agents."""
+    outputs = run.outputs or {}
+    metadata = get_field(outputs, "execution_metadata", {})
+    invoked = get_field(metadata, "agents_invoked", [])
+
+    expected = example.outputs if example else {}
+    expected_agents = get_field(expected, "expected_agents", [])
+
+    if not expected_agents:
+        return {"key": "tool_selection", "score": 1.0, "comment": "No expected agents specified."}
+
+    invoked_set = set(invoked)
+    expected_set = set(expected_agents)
+
+    intersection = invoked_set.intersection(expected_set)
+    union = invoked_set.union(expected_set)
+
+    score = len(intersection) / len(union) if union else 1.0
+    return {
+        "key": "tool_selection",
+        "score": score,
+        "comment": f"Selected {len(intersection)}/{len(expected_set)} expected agents.",
+    }
+
+
+# ============================================================
+# B. Agent-Level Evaluators
 # ============================================================
 
 def rag_groundedness_evaluator(run, example) -> dict[str, Any]:
@@ -180,7 +355,7 @@ def rag_retriever_quality_evaluator(run, example) -> dict[str, Any]:
 
 
 # ============================================================
-# 2. Calculator Agent Evaluators
+# Calculator Agent Evaluators
 # ============================================================
 
 def calculator_groundedness_evaluator(run, example) -> dict[str, Any]:
@@ -321,7 +496,7 @@ def calculator_latency_evaluator(run, example) -> dict[str, Any]:
 
 
 # ============================================================
-# 3. Research Agent Evaluators
+# Research Agent Evaluators
 # ============================================================
 
 def research_hallucination_evaluator(run, example) -> dict[str, Any]:
@@ -400,7 +575,7 @@ def research_latency_evaluator(run, example) -> dict[str, Any]:
 
 
 # ============================================================
-# 4. Summarizer Evaluator
+# Summarizer Evaluator
 # ============================================================
 
 def summarizer_consistency_evaluator(run, example) -> dict[str, Any]:
@@ -455,7 +630,7 @@ Score:"""
 
 
 # ============================================================
-# 5. Validator Evaluator
+# Validator Evaluator
 # ============================================================
 
 def validator_accuracy_evaluator(run, example) -> dict[str, Any]:

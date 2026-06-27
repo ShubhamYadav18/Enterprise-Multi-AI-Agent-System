@@ -21,6 +21,7 @@ from pathlib import Path
 # Ensure project root is in path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from typing import Any, Optional
 import time
 from datetime import datetime, timezone
 
@@ -296,15 +297,60 @@ def process_query(query: str) -> dict:
         "execution_metadata": None,
     }
 
-    # Execute graph
-    graph = get_compiled_graph()
-    result = graph.invoke(initial_state, config=config)
+    # Setup callbacks to capture token usage, latency, and LangSmith root run ID
+    from traces.callbacks import AgentTraceCallback
+    from langchain_core.callbacks import BaseCallbackHandler
+    from uuid import UUID
+    from evaluations.real_time import RealTimeEvaluationService
+
+    class RootRunIdCallback(BaseCallbackHandler):
+        def __init__(self) -> None:
+            super().__init__()
+            self.root_run_id: Optional[UUID] = None
+
+        def on_chain_start(
+            self,
+            serialized: dict[str, Any],
+            inputs: dict[str, Any],
+            *,
+            run_id: UUID,
+            **kwargs: Any,
+        ) -> None:
+            if self.root_run_id is None:
+                self.root_run_id = run_id
+
+    trace_callback = AgentTraceCallback(session_id=session.session_id)
+    root_callback = RootRunIdCallback()
+
+    config["callbacks"] = config.get("callbacks", []) + [trace_callback, root_callback]
+
+    # Execute graph via execute_query wrapper to log session_id as root input/output
+    from traces.session import state_var, config_var, evals_var, execute_query
+    
+    state_token = state_var.set(initial_state)
+    config_token = config_var.set(config)
+    evals_token = evals_var.set(({}, {}))
+    try:
+        execute_query(session.session_id)
+        result = initial_state
+        workflow_evals, agent_evals = evals_var.get()
+    finally:
+        state_var.reset(state_token)
+        config_var.reset(config_token)
+        evals_var.reset(evals_token)
 
     # Compute metadata
     total_duration_ms = (time.time() - start_time) * 1000
 
     all_agents = {"rag_agent", "research_agent", "calculator_agent"}
     invoked = set(result.get("agents_to_invoke", []))
+    
+    # Build corrected list of invoked agents to include Summarizer and Validator if any domain agent ran
+    invoked_list = list(invoked)
+    if invoked_list:
+        invoked_list.append("summarizer")
+        invoked_list.append("validator")
+        
     skipped = list(all_agents - invoked)
 
     # Count tool calls
@@ -317,20 +363,29 @@ def process_query(query: str) -> dict:
     # Finalize session
     session.finalize(
         query_type=result.get("query_type", ""),
-        agents_invoked=list(invoked),
+        agents_invoked=invoked_list,
         agents_skipped=skipped,
         parallel_groups=result.get("parallel_groups", []),
         tool_count=total_tool_calls,
     )
 
+    # Real-time evaluations are already run inside the User Query root trace context
+
+    # Compute cost
+    cost = (trace_callback.prompt_tokens * 3.0 + trace_callback.completion_tokens * 15.0) / 1_000_000
+
     return {
         "result": result,
         "session": session,
         "duration_ms": total_duration_ms,
-        "agents_invoked": list(invoked),
+        "agents_invoked": [agent.replace("_", " ").title() for agent in invoked_list],
         "agents_skipped": skipped,
         "agent_outputs": agent_outputs,
         "total_tool_calls": total_tool_calls,
+        "total_tokens": trace_callback.total_tokens,
+        "cost": cost,
+        "workflow_evaluation": workflow_evals,
+        "agent_evaluations": agent_evals,
     }
 
 
@@ -367,14 +422,20 @@ def display_execution_details(exec_data: dict, idx: int) -> None:
 
         col1, col2 = st.columns(2)
         with col1:
-            st.markdown("**✅ Invoked Agents:**")
             for agent in agents_invoked:
-                emoji = {"rag_agent": "📚", "research_agent": "🔍", "calculator_agent": "🔢"}.get(agent, "🤖")
+                emoji = {
+                    "Rag Agent": "📚", 
+                    "Research Agent": "🔍", 
+                    "Calculator Agent": "🔢",
+                    "Summarizer": "✍️",
+                    "Validator": "🛡️"
+                }.get(agent, "🤖")
                 st.markdown(f"  {emoji} `{agent}`")
         with col2:
             st.markdown("**⏭️ Skipped Agents:**")
             for agent in agents_skipped:
-                st.markdown(f"  ⬜ `{agent}`")
+                display_skipped = agent.replace("_", " ").title()
+                st.markdown(f"  ⬜ `{display_skipped}`")
 
     # 2. Parallel Execution
     parallel_groups = result.get("parallel_groups", [])
@@ -504,13 +565,74 @@ def display_execution_details(exec_data: dict, idx: int) -> None:
         else:
             st.info("No validation report available.")
 
-    # 7. Execution Metrics
+    # 7. Workflow Evaluation
+    workflow_eval = exec_data.get("workflow_evaluation")
+    if workflow_eval:
+        with st.expander("⚖️ Workflow Evaluation", expanded=True):
+            def eval_indicator(score: Any) -> str:
+                if score == "N/A": return "⚪ N/A"
+                if score == "Not Invoked": return "⚪ Not Invoked"
+                try:
+                    s = float(score)
+                    if s >= 0.8: return "🟢"
+                    elif s >= 0.5: return "🟡"
+                    return "🔴"
+                except Exception:
+                    return "⚪"
+
+            def format_score(score: Any) -> str:
+                if isinstance(score, (int, float)):
+                    return f"{score:.0%}"
+                return str(score)
+
+            cols = st.columns(5)
+            metrics = [
+                ("Answer Correctness", workflow_eval.get("answer_correctness")),
+                ("Groundedness", workflow_eval.get("groundedness")),
+                ("Context Relevance", workflow_eval.get("context_relevance")),
+                ("Task Completion", workflow_eval.get("task_completion")),
+                ("Tool Selection", workflow_eval.get("tool_selection")),
+            ]
+            for col, (label, score) in zip(cols, metrics):
+                with col:
+                    indicator = eval_indicator(score)
+                    st.metric(f"{indicator} {label}", format_score(score))
+
+    # 8. Agent-Level Evaluations
+    agent_evals = exec_data.get("agent_evaluations")
+    if agent_evals:
+        with st.expander("🕵️ Agent-Level Evaluations", expanded=True):
+            for agent_name, metrics in agent_evals.items():
+                if isinstance(metrics, dict):
+                    # Only show if not skipped/Not Invoked
+                    if metrics.get("status") == "Not Invoked":
+                        continue
+                    
+                    st.markdown(f"#### {agent_name}")
+                    cols = st.columns(len(metrics))
+                    for col, (metric_name, score) in zip(cols, metrics.items()):
+                        with col:
+                            display_metric_name = metric_name.replace("_", " ").title()
+                            indicator = eval_indicator(score)
+                            
+                            if "latency" in metric_name.lower():
+                                val_str = f"{score:.1f}ms" if isinstance(score, (int, float)) else str(score)
+                            else:
+                                val_str = format_score(score)
+                                
+                            st.metric(f"{indicator} {display_metric_name}", val_str)
+                    st.markdown("---")
+
+    # 9. Execution Metrics
     with st.expander("📊 Execution Metrics"):
         st.markdown(f"**Session ID:** `{session.session_id}`")
         st.markdown(f"**Total Duration:** {duration_ms:.0f}ms")
         st.markdown(f"**Agents Invoked:** {len(agents_invoked)}")
         st.markdown(f"**Agents Skipped:** {len(agents_skipped)}")
         st.markdown(f"**Total Tool Calls:** {exec_data['total_tool_calls']}")
+        st.markdown(f"**Total Tokens:** {exec_data.get('total_tokens', 0)}")
+        st.markdown(f"**Total Cost:** ${exec_data.get('cost', 0.0):.6f}")
+        parallel_groups = result.get("parallel_groups", [])
         st.markdown(f"**Parallel Execution:** {'Yes' if any(len(g) > 1 for g in parallel_groups) else 'No'}")
 
         if session.langsmith_url:

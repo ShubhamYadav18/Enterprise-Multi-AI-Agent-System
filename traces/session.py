@@ -67,7 +67,6 @@ class TraceSession(BaseModel):
                 f"user:{self.user_id}",
                 "enterprise-multi-agent",
             ],
-            "run_name": "User Query",
             "configurable": {
                 "session_id": self.session_id,
                 "thread_id": self.session_id,
@@ -149,3 +148,64 @@ def create_session(
     )
 
     return session
+
+
+# ============================================================
+# Root Trace wrapper for displaying session_id as input/output
+# ============================================================
+
+import contextvars
+from langsmith import traceable
+
+state_var: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("state")
+config_var: contextvars.ContextVar[RunnableConfig] = contextvars.ContextVar("config")
+evals_var: contextvars.ContextVar[tuple[dict[str, Any], dict[str, Any]]] = contextvars.ContextVar("evals")
+
+
+@traceable(name="User Query", run_type="chain")
+def execute_query(session_id: str) -> str:
+    """Traced wrapper function that logs the session ID as input and output.
+
+    Uses context variables to safely access GraphState and RunnableConfig,
+    run the LangGraph compiled graph, and run real-time evaluations within
+    the root trace context.
+    """
+    from graph.builder import get_compiled_graph
+    from evaluations.real_time import RealTimeEvaluationService
+    import time
+    
+    state = state_var.get()
+    config = config_var.get()
+    
+    start_time = time.time()
+    graph = get_compiled_graph()
+    result = graph.invoke(state, config=config)
+    elapsed_time_ms = (time.time() - start_time) * 1000
+    
+    # Mutate the state in-place to return outputs to the caller
+    state.clear()
+    state.update(result)
+    
+    # Find trace trackers
+    trace_callback = None
+    root_callback = None
+    for cb in config.get("callbacks", []):
+        if cb.__class__.__name__ == "AgentTraceCallback":
+            trace_callback = cb
+        elif cb.__class__.__name__ == "RootRunIdCallback":
+            root_callback = cb
+            
+    root_run_id_str = str(root_callback.root_run_id) if (root_callback and root_callback.root_run_id) else ""
+    
+    # Execute evaluations inside the User Query trace context
+    workflow_evals, agent_evals = RealTimeEvaluationService.evaluate_run(
+        state=state,
+        root_run_id=root_run_id_str,
+        elapsed_time_ms=elapsed_time_ms,
+        callback=trace_callback,
+    )
+    
+    # Save evaluations results in context variable
+    evals_var.set((workflow_evals, agent_evals))
+    
+    return session_id
