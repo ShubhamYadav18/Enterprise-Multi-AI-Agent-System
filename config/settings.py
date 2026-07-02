@@ -35,6 +35,12 @@ class Settings(BaseSettings):
     # --- Optional Search ---
     tavily_api_key: str = Field(default="", description="Tavily API key (optional, uses mock if empty)")
 
+    # --- DefectDojo ---
+    defectdojo_url: str = Field(default="", description="DefectDojo URL")
+    defectdojo_api_key: str = Field(default="", description="DefectDojo API token")
+    defectdojo_product: str = Field(default="", description="DefectDojo product identifier (name or ID)")
+    defectdojo_engagement: str = Field(default="", description="DefectDojo engagement identifier (name or ID)")
+
     # --- Paths ---
     documents_dir: Path = Field(default=PROJECT_ROOT / "data" / "documents")
     vectorstore_dir: Path = Field(default=PROJECT_ROOT / "vectorstore")
@@ -44,7 +50,7 @@ class Settings(BaseSettings):
     embedding_device: str = Field(default="cpu")
 
     # --- RAG ---
-    chunk_size: int = Field(default=500, description="Document chunk size for splitting")
+    chunk_size: int = Field(default=400, description="Document chunk size for splitting")
     chunk_overlap: int = Field(default=50, description="Overlap between chunks")
     retrieval_k: int = Field(default=4, description="Number of documents to retrieve")
 
@@ -54,6 +60,35 @@ class Settings(BaseSettings):
 
     # --- Logging ---
     log_level: str = Field(default="INFO")
+
+    # --- Datadog ---
+    datadog_enabled: bool = Field(default=False, description="Enable Datadog metrics publishing")
+    datadog_site: str = Field(default="datadoghq.com", description="Datadog site (e.g. datadoghq.com, datadoghq.eu)")
+    datadog_api_key: str = Field(default="", description="Datadog API key")
+    datadog_app_key: str = Field(default="", description="Datadog Application key")
+    datadog_metric_prefix: str = Field(default="ai.enterprise", description="Metric name prefix")
+
+    # --- Monitoring Thresholds ---
+    groundedness_min: float = Field(default=0.80, description="Min acceptable groundedness score (0-1)")
+    hallucination_max: float = Field(default=0.20, description="Max acceptable hallucination score (0-1)")
+    latency_max_ms: float = Field(default=20000.0, description="Max acceptable latency in ms")
+    total_cost_max: float = Field(default=0.50, description="Max acceptable total cost per query (USD)")
+    token_limit: int = Field(default=50000, description="Max acceptable tokens per query")
+
+    # --- Incident Provider ---
+    incident_provider: str = Field(default="noop", description="Incident provider: noop | servicenow | jira | pagerduty")
+
+    # --- ServiceNow ---
+    servicenow_enabled: bool = Field(default=False, description="Enable ServiceNow incident creation")
+    servicenow_instance_url: str = Field(default="", description="ServiceNow instance URL (https://xxx.service-now.com)")
+    servicenow_username: str = Field(default="", description="ServiceNow username")
+    servicenow_password: str = Field(default="", description="ServiceNow password")
+    servicenow_table: str = Field(default="incident", description="ServiceNow table name")
+    servicenow_category: str = Field(default="AI", description="ServiceNow incident category")
+    servicenow_subcategory: str = Field(default="LLM", description="ServiceNow incident subcategory")
+    servicenow_assignment_group: str = Field(default="", description="ServiceNow assignment group")
+    servicenow_impact: int = Field(default=2, description="ServiceNow impact (1=High, 2=Medium, 3=Low)")
+    servicenow_urgency: int = Field(default=2, description="ServiceNow urgency (1=High, 2=Medium, 3=Low)")
 
     model_config = {
         "env_file": str(PROJECT_ROOT / ".env"),

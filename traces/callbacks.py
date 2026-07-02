@@ -77,13 +77,16 @@ class AgentTraceCallback(BaseCallbackHandler):
         if response.llm_output:
             token_usage = response.llm_output.get("usage", {})
             if token_usage:
-                total = token_usage.get("total_tokens", 0)
-                if total:
-                    self.total_tokens += total
                 prompt = token_usage.get("prompt_tokens", token_usage.get("input_tokens", 0))
                 completion = token_usage.get("completion_tokens", token_usage.get("output_tokens", 0))
                 self.prompt_tokens += prompt
                 self.completion_tokens += completion
+                
+                total = token_usage.get("total_tokens", 0)
+                if total:
+                    self.total_tokens += total
+                else:
+                    self.total_tokens += (prompt + completion)
 
         logger.info(
             f"LLM call completed ({duration:.0f}ms)",

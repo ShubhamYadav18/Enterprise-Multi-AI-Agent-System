@@ -1,0 +1,195 @@
+{
+  "manifest_version": "1.0.0",
+  "schema_version": "1.0",
+  "generated_at": "2026-07-01T08:37:10.862182+00:00",
+  "application": {
+    "name": "Enterprise Multi-Agent AI System",
+    "version": "0.1.0",
+    "build_timestamp": "2026-07-01T08:37:08.231640+00:00",
+    "git_branch": "version-2",
+    "git_commit_hash": "fc4876b81f299546685bc69796b31e1cb230af24",
+    "python_version": "3.11.4 (tags/v3.11.4:d2340ef, Jun  7 2023, 05:45:37) [MSC v.1934 64 bit (AMD64)]",
+    "operating_system": "Windows 10 (AMD64)",
+    "environment": "development"
+  },
+  "framework": {
+    "langchain_version": "1.3.11",
+    "langgraph_version": "1.2.6",
+    "langsmith_version": "0.9.2",
+    "langchain_anthropic_version": "1.4.7",
+    "langchain_community_version": "0.4.2",
+    "langchain_huggingface_version": "1.2.2",
+    "fastapi_version": "0.138.1",
+    "streamlit_version": "1.58.0",
+    "pydantic_version": "2.13.4",
+    "uvicorn_version": "0.49.0",
+    "python_version": "3.11.4 (tags/v3.11.4:d2340ef, Jun  7 2023, 05:45:37) [MSC v.1934 64 bit (AMD64)]"
+  },
+  "llm": {
+    "provider": "Azure Anthropic",
+    "model_name": "claude-sonnet-4-6",
+    "model_version": null,
+    "temperature": 0.1,
+    "max_tokens": 2048,
+    "top_p": null,
+    "top_k": null,
+    "streaming_enabled": false,
+    "endpoint_url": "https://cis-hackathon-project-resource.services.ai.azure.com/anthropic",
+    "api_type": "azure",
+    "region": null,
+    "timeout_seconds": null
+  },
+  "embedding": {
+    "provider": "HuggingFace Sentence Transformers",
+    "model_name": "sentence-transformers/all-MiniLM-L6-v2",
+    "embedding_dimensions": 384,
+    "device": "cpu",
+    "normalize_embeddings": true,
+    "batch_size": null
+  },
+  "rag": {
+    "vector_database": "FAISS",
+    "vector_store_type": "FAISS (langchain_community)",
+    "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+    "chunk_size": 400,
+    "chunk_overlap": 50,
+    "text_splitter_type": "RecursiveCharacterTextSplitter",
+    "retriever_type": "similarity",
+    "retriever_top_k": 4,
+    "search_strategy": "similarity_search_with_score",
+    "similarity_metric": "L2 (Euclidean)",
+    "mmr_enabled": false,
+    "compression_retriever_enabled": false,
+    "reranker_enabled": false,
+    "context_window_size": null
+  },
+  "prompts": {
+    "system_prompt_version": "1.0.0",
+    "prompt_directory": "prompts",
+    "prompts": [
+      {
+        "prompt_name": "calculator_agent",
+        "file_path": "prompts\\calculator_agent.py",
+        "sha256_hash": "984a5ec7b5c6656e830e7cd1336e7cbbd7e25ebca943a53643a926bb1e189717",
+        "constants": [
+          "CALCULATOR_SYSTEM_PROMPT",
+          "CALCULATOR_HUMAN_PROMPT"
+        ]
+      },
+      {
+        "prompt_name": "orchestrator",
+        "file_path": "prompts\\orchestrator.py",
+        "sha256_hash": "b93ee12de976e7ead270ae973bad94e0aaa311f8ad1caeb9db481953b2283e54",
+        "constants": [
+          "ORCHESTRATOR_SYSTEM_PROMPT",
+          "ORCHESTRATOR_HUMAN_PROMPT"
+        ]
+      },
+      {
+        "prompt_name": "rag_agent",
+        "file_path": "prompts\\rag_agent.py",
+        "sha256_hash": "fdcce77e7bdf388fafd7d500b07755a6970d4c5c9ec397a37e9316e830bdc924",
+        "constants": [
+          "RAG_SYSTEM_PROMPT",
+          "RAG_HUMAN_PROMPT"
+        ]
+      },
+      {
+        "prompt_name": "research_agent",
+        "file_path": "prompts\\research_agent.py",
+        "sha256_hash": "13f9f35f14f1c43b539315c63b5e98e745a52bb4496706273b329013c2fb7797",
+        "constants": [
+          "RESEARCH_SYSTEM_PROMPT",
+          "RESEARCH_HUMAN_PROMPT"
+        ]
+      },
+      {
+        "prompt_name": "summarizer_agent",
+        "file_path": "prompts\\summarizer_agent.py",
+        "sha256_hash": "0d095ebcd9db96fbd6536284d56c64a03d826019bd6417d2a05aa0ca5fd84bc0",
+        "constants": [
+          "SUMMARIZER_SYSTEM_PROMPT",
+          "SUMMARIZER_HUMAN_PROMPT"
+        ]
+      },
+      {
+        "prompt_name": "validation_agent",
+        "file_path": "prompts\\validation_agent.py",
+        "sha256_hash": "90906f2c8e4ffff31a7956addcab2c07c7218cc71f6053025e54aacb16b9734b",
+        "constants": [
+          "VALIDATION_SYSTEM_PROMPT",
+          "VALIDATION_HUMAN_PROMPT"
+        ]
+      }
+    ],
+    "few_shot_enabled": false,
+    "structured_output_enabled": true
+  },
+  "agents": {
+    "framework": "LangGraph",
+    "orchestrator_name": "orchestrator",
+    "num_agents": 6,
+    "agents": [
+      {
+        "name": "orchestrator",
+        "display_name": "Orchestrator",
+        "agent_type": "orchestrator"
+      },
+      {
+        "name": "rag",
+        "display_name": "Rag",
+        "agent_type": "domain"
+      },
+      {
+        "name": "research",
+        "display_name": "Research",
+        "agent_type": "domain"
+      },
+      {
+        "name": "calculator",
+        "display_name": "Calculator",
+        "agent_type": "domain"
+      },
+      {
+        "name": "summarizer",
+        "display_name": "Summarizer",
+        "agent_type": "utility"
+      },
+      {
+        "name": "validator",
+        "display_name": "Validator",
+        "agent_type": "utility"
+      }
+    ],
+    "parallel_execution_enabled": true,
+    "max_parallel_agents": 3,
+    "validation_layer_enabled": true,
+    "summarization_enabled": true,
+    "graph_topology": "DAG"
+  },
+  "tools": [
+    {
+      "tool_name": "get_search_provider",
+      "description": "",
+      "input_schema": null,
+      "output_type": "str"
+    }
+  ],
+  "observability": {
+    "langsmith_enabled": true,
+    "project_name": "Enterprise Multi Agent Demo",
+    "tracing_enabled": true,
+    "evaluation_enabled": true,
+    "realtime_evaluation_enabled": true,
+    "offline_evaluation_enabled": true,
+    "opentelemetry_enabled": false
+  },
+  "security": {
+    "cyclonedx_enabled": true,
+    "defectdojo_enabled": false,
+    "sbom_generation_enabled": true,
+    "sbom_file_path": "sbom\\bom.json",
+    "secrets_loaded_from": ".env (pydantic-settings)",
+    "environment_variables_source": ".env / OS environment variables"
+  }
+}

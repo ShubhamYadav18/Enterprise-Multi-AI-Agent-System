@@ -39,6 +39,9 @@ class TraceSession(BaseModel):
     total_tokens: int = Field(default=0)
     total_duration_ms: float = Field(default=0.0)
     langsmith_url: Optional[str] = Field(default=None)
+    sbom_version: str = "N/A"
+    security_scan_timestamp: str = "Never"
+    security_status: str = "No scan run yet"
 
     def get_runnable_config(self) -> RunnableConfig:
         """Create a RunnableConfig for LangSmith trace correlation.
@@ -58,6 +61,12 @@ class TraceSession(BaseModel):
             "timestamp": self.start_time.isoformat(),
             "environment": "demo",
             "project": settings.langchain_project,
+            "agents_invoked": self.agents_invoked,
+            "tool_count": self.tool_count,
+            "parallel_groups": len(self.parallel_groups),
+            "sbom_version": self.sbom_version,
+            "security_scan_timestamp": self.security_scan_timestamp,
+            "security_status": self.security_status,
         }
 
         config: RunnableConfig = {
@@ -137,10 +146,30 @@ def create_session(
     Returns:
         TraceSession with a unique session_id and RunnableConfig.
     """
+    # Fetch the latest security scan result to associate with this session
+    try:
+        from security.service import SecurityService
+        latest_scan = SecurityService().get_latest_scan_result()
+        if latest_scan:
+            sbom_ver = f"v{latest_scan.total_packages}-pkgs"
+            scan_ts = latest_scan.timestamp.strftime('%Y-%m-%d %H:%M:%S UTC') if hasattr(latest_scan.timestamp, 'strftime') else str(latest_scan.timestamp)
+            sec_stat = latest_scan.status
+        else:
+            sbom_ver = "N/A"
+            scan_ts = "Never"
+            sec_stat = "No scan run yet"
+    except Exception:
+        sbom_ver = "N/A"
+        scan_ts = "Never"
+        sec_stat = "No scan run yet"
+
     session = TraceSession(
         query=query,
         user_id=user_id,
         conversation_id=conversation_id or str(uuid.uuid4()),
+        sbom_version=sbom_ver,
+        security_scan_timestamp=scan_ts,
+        security_status=sec_stat,
     )
 
     logger.info(
@@ -156,11 +185,12 @@ def create_session(
 
 import contextvars
 from langsmith import traceable
+from langsmith.run_helpers import get_current_run_tree
 
 state_var: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("state")
 config_var: contextvars.ContextVar[RunnableConfig] = contextvars.ContextVar("config")
 evals_var: contextvars.ContextVar[tuple[dict[str, Any], dict[str, Any]]] = contextvars.ContextVar("evals")
-
+trace_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("trace_id", default="")
 
 @traceable(name="User Query", run_type="chain")
 def execute_query(session_id: str) -> str:
@@ -173,6 +203,10 @@ def execute_query(session_id: str) -> str:
     from graph.builder import get_compiled_graph
     from evaluations.real_time import RealTimeEvaluationService
     import time
+    
+    run_tree = get_current_run_tree()
+    true_root_id = str(run_tree.id) if run_tree else ""
+    trace_id_var.set(true_root_id)
     
     state = state_var.get()
     config = config_var.get()
@@ -188,19 +222,15 @@ def execute_query(session_id: str) -> str:
     
     # Find trace trackers
     trace_callback = None
-    root_callback = None
     for cb in config.get("callbacks", []):
         if cb.__class__.__name__ == "AgentTraceCallback":
             trace_callback = cb
-        elif cb.__class__.__name__ == "RootRunIdCallback":
-            root_callback = cb
+            break
             
-    root_run_id_str = str(root_callback.root_run_id) if (root_callback and root_callback.root_run_id) else ""
-    
     # Execute evaluations inside the User Query trace context
     workflow_evals, agent_evals = RealTimeEvaluationService.evaluate_run(
         state=state,
-        root_run_id=root_run_id_str,
+        root_run_id=true_root_id,
         elapsed_time_ms=elapsed_time_ms,
         callback=trace_callback,
     )

@@ -113,6 +113,9 @@ class ExecutionMetadata(BaseModel):
     end_time: Optional[datetime] = Field(default=None, description="Execution end time")
     langsmith_url: Optional[str] = Field(default=None, description="LangSmith trace URL")
     routing_reasoning: str = Field(default="", description="Why the orchestrator chose this route")
+    sbom_version: str = Field(default="N/A", description="Software Bill of Materials version")
+    security_scan_timestamp: str = Field(default="Never", description="Time of last security scan")
+    security_status: str = Field(default="No scan run yet", description="Current security status")
 
 
 # ============================================================

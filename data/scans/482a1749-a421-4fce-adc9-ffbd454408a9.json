@@ -1,0 +1,14 @@
+{
+  "scan_id": "482a1749-a421-4fce-adc9-ffbd454408a9",
+  "test_id": null,
+  "timestamp": "2026-06-29 15:30:40.284780",
+  "total_packages": 137,
+  "critical_count": 0,
+  "high_count": 0,
+  "medium_count": 0,
+  "low_count": 0,
+  "info_count": 0,
+  "findings": [],
+  "status": "Completed (Offline)",
+  "error": "DefectDojo URL or API Key is missing. Scan completed in local offline mode."
+}

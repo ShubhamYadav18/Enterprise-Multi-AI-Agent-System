@@ -220,6 +220,8 @@ Results are stored in LangSmith for comparison across runs.
 | UI | Streamlit |
 | Validation | Pydantic v2 |
 | Configuration | python-dotenv + pydantic-settings |
+| Supply Chain Security | CycloneDX (cdxgen) & DefectDojo (See [SECURITY.md](file:///d:/MULTI%20AGENT/enterprise_multi_agent/SECURITY.md)) |
+
 
 ---
 

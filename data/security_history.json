@@ -1,0 +1,32 @@
+[
+  {
+    "scan_id": "9431e9ac-b559-4814-aa57-833b25a164c4",
+    "timestamp": "2026-06-29 15:37:23 UTC",
+    "packages": 137,
+    "critical": 0,
+    "high": 0,
+    "medium": 0,
+    "low": 0,
+    "status": "Completed (Offline)"
+  },
+  {
+    "scan_id": "482a1749-a421-4fce-adc9-ffbd454408a9",
+    "timestamp": "2026-06-29 15:30:40 UTC",
+    "packages": 137,
+    "critical": 0,
+    "high": 0,
+    "medium": 0,
+    "low": 0,
+    "status": "Completed (Offline)"
+  },
+  {
+    "scan_id": "1d620544-d46f-43a8-928b-23d77f6b7ff8",
+    "timestamp": "2026-06-29 15:29:09 UTC",
+    "packages": 137,
+    "critical": 0,
+    "high": 0,
+    "medium": 0,
+    "low": 0,
+    "status": "Completed (Offline)"
+  }
+]
